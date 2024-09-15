@@ -7,8 +7,14 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.11"
-screeninfo = "^0.8.1"
 mss = "^9.0.2"
+pillow = "^10.4.0"
+opencv-python = "^4.10.0.84"
+pytesseract = "^0.3.13"
+pyautogui = "^0.9.54"
+pyinput = "^0.3.2"
+keyboard = "^0.13.5"
+pywin32 = "^306"
 
 
 [build-system]
