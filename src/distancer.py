@@ -6,7 +6,8 @@ from math import sqrt
 import cv2
 import numpy as np
 
-from config import BLACK, METER_LOW, METER_HIGH, ME_LOW, ME_HIGH, POINT_LOW, POINT_HIGH
+from config import BLACK, METER_LOW, METER_HIGH, ME_LOW, ME_HIGH, POINT_LOW, POINT_HIGH, MIN_BORDER_COLOR_MINIMAP, \
+    MAX_BORDER_COLOR_MINIMAP
 from displayer import update_tk_text
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -18,6 +19,57 @@ def detect_bottom_right_square_width_black_pixel(screen_array: np.array) -> tupl
                 necessary_y = screen_array.shape[0] - (i_y + 1)  # including
                 necessary_x = screen_array.shape[1] - (i_x + 1)  # including
                 return  necessary_y, necessary_x
+
+
+def determine_minimap_borders(screen_array: np.array, start_point: tuple) -> tuple:
+    bottom_right_map = None
+    bottom_left_map = None
+    top_right_map = None
+    top_left_map = None
+    curr_point = list(start_point)
+    curr_point[0] += 1
+    while ...:
+        y, x = curr_point
+        if np.all(np.logical_and(screen_array[y][x] >= MIN_BORDER_COLOR_MINIMAP, screen_array[y][x] <= MAX_BORDER_COLOR_MINIMAP)):
+            curr_point[1] += 1
+        else:
+            curr_point[1] -= 1
+            x -= 1
+            bottom_right_map = [y, x]
+            break
+
+    while ...:
+        y, x = curr_point
+        if np.all(np.logical_and(screen_array[y][x] >= MIN_BORDER_COLOR_MINIMAP, screen_array[y][x] <= MAX_BORDER_COLOR_MINIMAP)):
+            curr_point[0] -= 1
+        else:
+            curr_point[0] += 1
+            y += 1
+            top_right_map = [y, x]
+            break
+
+    while ...:
+        y, x = curr_point
+        if np.all(np.logical_and(screen_array[y][x] >= MIN_BORDER_COLOR_MINIMAP, screen_array[y][x] <= MAX_BORDER_COLOR_MINIMAP)):
+            curr_point[1] -= 1
+        else:
+            curr_point[1] += 1
+            x += 1
+            top_left_map = [y, x]
+            break
+
+    while ...:
+        y, x = curr_point
+        if np.all(np.logical_and(screen_array[y][x] >= MIN_BORDER_COLOR_MINIMAP, screen_array[y][x] <= MAX_BORDER_COLOR_MINIMAP)):
+            curr_point[0] += 1
+        else:
+            curr_point[0] -= 1
+            y -= 1
+            bottom_left_map = [y, x]
+            break
+
+    return top_left_map, bottom_right_map
+
 
 def determine_square_pixel_width(screen_array: np.array, start_point: tuple) -> int:
     i_y, i_x = start_point
@@ -66,17 +118,20 @@ def detect_point_from_drone(map_array: np.array) -> tuple:
             # cv2.circle(map_array, (cx, cy), 15, (0, 0, 255), -1)
 
 def initialize_battle_params(screen_array: np.array) -> dict:
-    # screen_array = cv2.imread("images/Screenshot_1.png")
     start_point = detect_bottom_right_square_width_black_pixel(screen_array)
     square_width_pixel = determine_square_pixel_width(screen_array, start_point)
     square_width_meter = determine_square_meter_width(screen_array, start_point, square_width_pixel)
     meters_in_pixel = square_width_meter / square_width_pixel
 
+    # minimap_borders = determine_minimap_borders(screen_array, start_point)  # TODO: gradients
+    minimap_borders = ([633, 1473], [1066, 1906])
+
     return {
         "start_point": start_point,
         "square_width_pixel": square_width_pixel,
         "square_width_meter": square_width_meter,
-        "meters_in_pixel": meters_in_pixel
+        "meters_in_pixel": meters_in_pixel,
+        "minimap_borders": minimap_borders,
     }
 
 def calc_distance(me_xy: tuple, point_xy: tuple, meters_in_pixel: float) -> float:
@@ -92,18 +147,26 @@ def print_battle_params(battle_params: dict) -> None:
     square_width_pixel = battle_params.get('square_width_pixel')
     square_width_meter = battle_params.get('square_width_meter')
     meters_in_pixel = battle_params.get('meters_in_pixel')
+    minimap_borders = battle_params.get('minimap_borders')
 
     print(f"SQUARE WIDTH PIXEL: {square_width_pixel}")
     print(f"SQUARE WIDTH METER: {square_width_meter}")
     print(f"METERS IN PIXEL: {round(meters_in_pixel, 2)}")
+    print(f"MINIMAP BORDERS: {minimap_borders}")
 
 
 def process_image(root, label, battle_params: dict, prev_distance = None):
     screen = pyautogui.screenshot()
-    map_array = cv2.cvtColor(np.array(screen.crop((1473, 633, 1907, 1067))), cv2.COLOR_RGB2BGR)
+    screen = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
 
-    me_xy = detect_me_from_drone(map_array)
-    point_xy = detect_point_from_drone(map_array)
+    minimap_borders = battle_params["minimap_borders"]
+    minimap_array = screen[
+        minimap_borders[0][0]:minimap_borders[1][0] + 1,
+        minimap_borders[0][1]:minimap_borders[1][1] + 1,
+    ]
+
+    me_xy = detect_me_from_drone(minimap_array)
+    point_xy = detect_point_from_drone(minimap_array)
     curr_distance = calc_distance(me_xy, point_xy, battle_params.get('meters_in_pixel'))
     if curr_distance and curr_distance != prev_distance:
         new_text = f"D: {str(curr_distance)}\nM: {battle_params['square_width_meter']}"
