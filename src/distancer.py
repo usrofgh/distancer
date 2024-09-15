@@ -1,4 +1,8 @@
+import time
+from copy import deepcopy
 import pyautogui
+import keyboard
+
 import pytesseract
 
 import PIL.Image
@@ -7,7 +11,7 @@ import cv2
 import numpy as np
 
 from config import BLACK, METER_LOW, METER_HIGH, ME_LOW, ME_HIGH, POINT_LOW, POINT_HIGH, MIN_BORDER_COLOR_MINIMAP, \
-    MAX_BORDER_COLOR_MINIMAP
+MAX_BORDER_COLOR_MINIMAP, IS_BIG_MAP
 from displayer import update_tk_text
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -155,7 +159,14 @@ def print_battle_params(battle_params: dict) -> None:
     print(f"MINIMAP BORDERS: {minimap_borders}")
 
 
-def process_image(root, label, battle_params: dict, prev_distance = None):
+def process_image(
+    root,
+    label,
+    battle_params: dict,
+    prev_minimap_distance = None,
+    prev_minimap_me_xy = None,
+    prev_minimap_point_xy = None
+):
     screen = pyautogui.screenshot()
     screen = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
 
@@ -165,12 +176,44 @@ def process_image(root, label, battle_params: dict, prev_distance = None):
         minimap_borders[0][1]:minimap_borders[1][1] + 1,
     ]
 
-    me_xy = detect_me_from_drone(minimap_array)
-    point_xy = detect_point_from_drone(minimap_array)
-    curr_distance = calc_distance(me_xy, point_xy, battle_params.get('meters_in_pixel'))
-    if curr_distance and curr_distance != prev_distance:
-        new_text = f"D: {str(curr_distance)}\nM: {battle_params['square_width_meter']}"
-        update_tk_text(label, new_text)
-        prev_distance = curr_distance
+    minimap_point_xy = detect_point_from_drone(minimap_array)
+    minimap_me_xy = detect_me_from_drone(minimap_array)
 
-    root.after(200, process_image, root, label, battle_params, prev_distance)
+    if (
+        (minimap_point_xy is None or minimap_me_xy is None) or
+        (prev_minimap_me_xy == minimap_me_xy and prev_minimap_point_xy == minimap_point_xy)
+    ):
+        root.after(200, process_image, root, label, battle_params, prev_minimap_distance, prev_minimap_me_xy, prev_minimap_point_xy)
+        # root.after(200, process_image, root, label, battle_params, prev_minimap_distance)
+        return
+
+    full_map_curr_distance = None
+    if IS_BIG_MAP:
+        x = 782
+        y = 178
+        width = x + 844 + 1
+        height = y + 844 + 1
+        crop = (x, y, width, height)
+        keyboard.press("m")
+        time.sleep(0.1)
+        full_map_screen = pyautogui.screenshot().crop(crop)
+        keyboard.release("m")
+
+        full_map_array = cv2.cvtColor(np.array(full_map_screen), cv2.COLOR_RGB2BGR)
+        full_map_point_xy = detect_point_from_drone(full_map_array)
+        full_map_me_xy = detect_me_from_drone(full_map_array)
+        full_map_curr_distance = calc_distance(full_map_me_xy, full_map_point_xy, battle_params.get('meters_in_pixel'))
+
+
+    minimap_curr_distance = calc_distance(minimap_me_xy, minimap_point_xy, battle_params.get('meters_in_pixel'))
+
+    if minimap_curr_distance and minimap_curr_distance != prev_minimap_distance:
+        d = full_map_curr_distance if IS_BIG_MAP else minimap_curr_distance
+        # d = minimap_curr_distance
+        new_text = f"D: {str(d)}\nM: {battle_params['square_width_meter']}"
+        update_tk_text(label, new_text)
+        root.after(200, process_image, root, label, battle_params, minimap_curr_distance, minimap_me_xy, minimap_point_xy)
+        # root.after(200, process_image, root, label, battle_params, minimap_curr_distance)
+    else:
+        root.after(200, process_image, root, label, battle_params, prev_minimap_distance, prev_minimap_me_xy, prev_minimap_point_xy)
+        # root.after(200, process_image, root, label, battle_params, prev_minimap_distance)
