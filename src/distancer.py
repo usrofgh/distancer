@@ -1,5 +1,3 @@
-import time
-
 import pyautogui
 import pytesseract
 
@@ -8,144 +6,108 @@ from math import sqrt
 import cv2
 import numpy as np
 
-from displayer import create_overlay, update_tk_text
+from config import BLACK, METER_LOW, METER_HIGH, ME_LOW, ME_HIGH, POINT_LOW, POINT_HIGH
+from displayer import update_tk_text
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
-SQUARE_WIDTH_PIXEL = None
-SQUARE_WIDTH_METER = None
-METERS_IN_PIXEL = None
-START_POINT = None
-CROP = None
-PREV_DISTANCE = None
+def detect_bottom_right_square_width_black_pixel(screen_array: np.array) -> tuple:
+    for i_y, y in enumerate(screen_array[::-1]):
+        for i_x, p_color in enumerate(y[::-1]):
+            if np.all(p_color == BLACK):
+                necessary_y = screen_array.shape[0] - (i_y + 1)  # including
+                necessary_x = screen_array.shape[1] - (i_x + 1)  # including
+                return  necessary_y, necessary_x
 
-BLACK_BGR = np.array([0, 0, 0], dtype=np.uint8)
+def determine_square_pixel_width(screen_array: np.array, start_point: tuple) -> int:
+    i_y, i_x = start_point
+    while True:
+        i_x -= 1
+        pix_color = screen_array[i_y][i_x]
+        if np.all(pix_color != BLACK):
+            square_width = start_point[1] - i_x
+            return square_width
 
-METER_LOW = np.array([0, 0, 0], dtype=np.uint8)
-METER_HIGH = np.array([37, 38, 38], dtype=np.uint8)
-
-ME_LOW = np.array([60, 151, 72], dtype=np.uint8)
-ME_HIGH = np.array([86, 215, 103], dtype=np.uint8)
-POINT_LOW = np.array([5, 153, 155], dtype=np.uint8)
-POINT_HIGH = np.array([7, 216, 216], dtype=np.uint8)
-
-
-def initialize_params(screen_array: np.array):
-    global START_POINT
-    if START_POINT:
-        return
-
-    global SQUARE_WIDTH_PIXEL
-    global SQUARE_WIDTH_METER
-    global METERS_IN_PIXEL
-
-    # ----- DETECT BOTTOM RIGHT BLACK_BGR PIXEL COORDINATE OF SQUARE WIDTH -----
-    is_exit = False
-    for i_row, row in enumerate(screen_array[::-1]):
-        for i_column, p_color in enumerate(row[::-1]):
-            if np.all(p_color == BLACK_BGR):
-                source_row = screen_array.shape[0] - (i_row + 1)
-                source_column = screen_array.shape[1] - (i_column + 1)
-                START_POINT = (source_column, source_row)
-                is_exit = True
-                break
-        if is_exit:
-            break
-    if not START_POINT:
-        return
-
-    # ----------------------------------------------------------------------
-
-    # ----- DETECT SQUARE WIDTH IN PIXELS -----
-    i_square_pixel_width = START_POINT[0]
-    j_square_pixel_width = START_POINT[1]
-    while ...:
-        i_square_pixel_width -= 1
-        if np.all(screen_array[j_square_pixel_width][i_square_pixel_width] != BLACK_BGR):
-            SQUARE_WIDTH_PIXEL = START_POINT[0] - i_square_pixel_width
-            print(f"SQUARE WITH PIXEL: {SQUARE_WIDTH_PIXEL}")
-            break
-    # ----------------------------------------
-
-    # ----- DETECT SQUARE WIDTH IN METERS -----
+def determine_square_meter_width(screen_array: np.array, start_point: tuple, square_width_pixel: int) -> float:
     meter_interest_area = screen_array[
-                          START_POINT[1] - SQUARE_WIDTH_PIXEL // 3: START_POINT[1],
-                          START_POINT[0] - SQUARE_WIDTH_PIXEL: START_POINT[0]
-                          ]
+      start_point[0] - square_width_pixel // 3: start_point[0],
+      start_point[1] - square_width_pixel: start_point[1]
+    ]
     mask = cv2.inRange(meter_interest_area, METER_LOW, METER_HIGH)
     mask_pil = PIL.Image.fromarray(mask)
-    SQUARE_WIDTH_METER = pytesseract.image_to_string(mask_pil, config='--psm 6')
-    try:
-        SQUARE_WIDTH_METER = int("".join([ch for ch in SQUARE_WIDTH_METER if ch.isdigit()]))
-        print(f"SQUARE WITH METER: {SQUARE_WIDTH_METER}")
-    except ValueError:
-        START_POINT = None
-        SQUARE_WIDTH_PIXEL = None
-        SQUARE_WIDTH_METER = None
-        METERS_IN_PIXEL = None
-    # --------------------------------------
+    square_width_meter = pytesseract.image_to_string(mask_pil, config='--psm 6')
+    square_width_meter = int("".join([ch for ch in square_width_meter if ch.isdigit()]))
+    if square_width_meter > 1000:
+        square_width_meter = int(square_width_meter / 10)
+    return square_width_meter
 
-    METERS_IN_PIXEL = SQUARE_WIDTH_METER / SQUARE_WIDTH_PIXEL
-    print(f"METERS IN PIXEL: {round(METERS_IN_PIXEL, 2)}")
-
-def calc(map_array: np.array):
-    # ----- DETECT ME CENTER FROM A DRONE -----
+def detect_me_from_drone(map_array: np.array) -> tuple:
     me_mask = cv2.inRange(map_array, ME_LOW, ME_HIGH)
     me_contours, _ = cv2.findContours(me_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    me_xy = None
     for contour in me_contours:
-        M = cv2.moments(contour)
-        if M["m00"] != 0:
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
+        m = cv2.moments(contour)
+        if m["m00"] != 0:
+            cx = int(m["m10"] / m["m00"])
+            cy = int(m["m01"] / m["m00"])
             me_xy = (cx, cy)
-            cv2.circle(map_array, (cx, cy), 15, (0, 0, 255), -1)
-    # -----------------------------------------
+            return me_xy
+            # cv2.circle(map_array, (cx, cy), 15, (0, 0, 255), -1)
 
-    # ----- DETECT YELLOW POINT CENTER FROM A DRONE -----
+def detect_point_from_drone(map_array: np.array) -> tuple:
     point_mask = cv2.inRange(map_array, POINT_LOW, POINT_HIGH)
     point_contours, _ = cv2.findContours(point_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    point_xy = None
     for contour in point_contours:
-        M = cv2.moments(contour)
-        if M["m00"] != 0:
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
+        m = cv2.moments(contour)
+        if m["m00"] != 0:
+            cx = int(m["m10"] / m["m00"])
+            cy = int(m["m01"] / m["m00"])
             point_xy = (cx, cy)
-            cv2.circle(map_array, (cx, cy), 15, (0, 0, 255), -1)
-    # -----------------------------------------
+            return point_xy
+            # cv2.circle(map_array, (cx, cy), 15, (0, 0, 255), -1)
 
-    # print(f"ME: {me_xy} |    POINT: {point_xy}")
+def initialize_battle_params(screen_array: np.array) -> dict:
+    # screen_array = cv2.imread("images/Screenshot_1.png")
+    start_point = detect_bottom_right_square_width_black_pixel(screen_array)
+    square_width_pixel = determine_square_pixel_width(screen_array, start_point)
+    square_width_meter = determine_square_meter_width(screen_array, start_point, square_width_pixel)
+    meters_in_pixel = square_width_meter / square_width_pixel
+
+    return {
+        "start_point": start_point,
+        "square_width_pixel": square_width_pixel,
+        "square_width_meter": square_width_meter,
+        "meters_in_pixel": meters_in_pixel
+    }
+
+def calc_distance(me_xy: tuple, point_xy: tuple, meters_in_pixel: float) -> float:
     try:
         d = sqrt((point_xy[0] - me_xy[0]) ** 2 + (point_xy[1] - me_xy[1]) ** 2)
-        d = round(d * METERS_IN_PIXEL, 2)
+        d = round(d * meters_in_pixel, 2)
         return d
     except TypeError:
         pass
 
 
-def process_image(root, label):
-    global PREV_DISTANCE
+def print_battle_params(battle_params: dict) -> None:
+    square_width_pixel = battle_params.get('square_width_pixel')
+    square_width_meter = battle_params.get('square_width_meter')
+    meters_in_pixel = battle_params.get('meters_in_pixel')
+
+    print(f"SQUARE WIDTH PIXEL: {square_width_pixel}")
+    print(f"SQUARE WIDTH METER: {square_width_meter}")
+    print(f"METERS IN PIXEL: {round(meters_in_pixel, 2)}")
+
+
+def process_image(root, label, battle_params: dict, prev_distance = None):
     screen = pyautogui.screenshot()
     map_array = cv2.cvtColor(np.array(screen.crop((1473, 633, 1907, 1067))), cv2.COLOR_RGB2BGR)
-    curr_distance = calc(map_array)
-    if curr_distance and curr_distance != PREV_DISTANCE:
-        new_text = f"D: {str(curr_distance)}\nM: {SQUARE_WIDTH_METER}"
+
+    me_xy = detect_me_from_drone(map_array)
+    point_xy = detect_point_from_drone(map_array)
+    curr_distance = calc_distance(me_xy, point_xy, battle_params.get('meters_in_pixel'))
+    if curr_distance and curr_distance != prev_distance:
+        new_text = f"D: {str(curr_distance)}\nM: {battle_params['square_width_meter']}"
         update_tk_text(label, new_text)
-        # print(f"\r{curr_distance}", end="")
-        PREV_DISTANCE = curr_distance
-    root.after(200, process_image, root, label)
+        prev_distance = curr_distance
 
-def main():
-    time.sleep(2)
-    screen = pyautogui.screenshot()
-    screen_array = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
-    initialize_params(screen_array)
-
-    root, label = create_overlay()
-    root.after(0, process_image, root, label)
-    root.mainloop()
-
-
-if __name__ == "__main__":
-    main()
+    root.after(200, process_image, root, label, battle_params, prev_distance)
