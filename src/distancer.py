@@ -195,7 +195,7 @@ def process_image(
         height = y + 844 + 1
         crop = (x, y, width, height)
         keyboard.press("m")
-        time.sleep(0.1)
+        time.sleep(0.3)
         full_map_screen = pyautogui.screenshot().crop(crop)
         keyboard.release("m")
 
