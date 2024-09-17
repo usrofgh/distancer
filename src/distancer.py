@@ -111,15 +111,38 @@ def detect_me_from_drone(map_array: np.array) -> tuple:
 
 def detect_point_from_drone(map_array: np.array) -> tuple:
     point_mask = cv2.inRange(map_array, POINT_LOW, POINT_HIGH)
-    point_contours, _ = cv2.findContours(point_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for contour in point_contours:
-        m = cv2.moments(contour)
-        if m["m00"] != 0:
-            cx = int(m["m10"] / m["m00"])
-            cy = int(m["m01"] / m["m00"])
-            point_xy = (cx, cy)
-            return point_xy
-            # cv2.circle(map_array, (cx, cy), 15, (0, 0, 255), -1)
+    point_contours, _ = cv2.findContours(point_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not point_contours:
+        return None, None
+
+    biggest_contour = max(point_contours, key=cv2.contourArea)
+    if cv2.contourArea(biggest_contour) <= 15:
+        return None, None
+
+    m = cv2.moments(biggest_contour)
+    if m["m00"] != 0:
+        cx = int(m["m10"] / m["m00"])
+        cy = int(m["m01"] / m["m00"])
+        point_xy = (cx, cy)
+        contour_pixels = tuple(point[0] for point in biggest_contour)
+        return point_xy, contour_pixels
+        # cv2.circle(map_array, (cx, cy), 15, (0, 0, 255), -1)
+
+def is_shifted(previous_contour_pixels: tuple, current_contour_pixels: tuple) -> bool:
+    previous_set = set(map(tuple, [tuple(point) for point in previous_contour_pixels]))
+    current_set = set(map(tuple, [tuple(point) for point in current_contour_pixels]))
+
+    matching_pixels = previous_set.intersection(current_set)
+    num_matching_pixels = len(matching_pixels)
+    num_previous_pixels = len(previous_set)
+
+
+    if num_matching_pixels > (num_previous_pixels * 0.5):
+        shift_detected = False
+    else:
+        shift_detected = True
+
+    return shift_detected
 
 def initialize_battle_params(screen_array: np.array) -> dict:
     start_point = detect_bottom_right_square_width_black_pixel(screen_array)
@@ -165,7 +188,8 @@ def process_image(
     battle_params: dict,
     prev_minimap_distance = None,
     prev_minimap_me_xy = None,
-    prev_minimap_point_xy = None
+    prev_minimap_point_xy = None,
+    prev_point_contour = None
 ):
     screen = pyautogui.screenshot()
     screen = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
@@ -176,16 +200,24 @@ def process_image(
         minimap_borders[0][1]:minimap_borders[1][1] + 1,
     ]
 
-    minimap_point_xy = detect_point_from_drone(minimap_array)
+    minimap_point_xy, curr_contour_pixels = detect_point_from_drone(minimap_array)
     minimap_me_xy = detect_me_from_drone(minimap_array)
 
     if (
         (minimap_point_xy is None or minimap_me_xy is None) or
-        (prev_minimap_me_xy == minimap_me_xy and prev_minimap_point_xy == minimap_point_xy)
+        (prev_minimap_me_xy == minimap_me_xy and prev_minimap_point_xy == minimap_point_xy) or
+        prev_point_contour and  not is_shifted(prev_point_contour, curr_contour_pixels)
     ):
-        root.after(200, process_image, root, label, battle_params, prev_minimap_distance, prev_minimap_me_xy, prev_minimap_point_xy)
-        # root.after(200, process_image, root, label, battle_params, prev_minimap_distance)
+        root.after(200, process_image, root, label, battle_params, prev_minimap_distance, prev_minimap_me_xy, prev_minimap_point_xy, prev_point_contour)
         return
+
+    img_name = f"{str(datetime.now().timestamp()).replace('.', '')}"
+    point_mask = cv2.inRange(minimap_array, POINT_LOW, POINT_HIGH)
+    point_contours_binary, _ = cv2.findContours(point_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+
+    cv2.imwrite(f"point/{img_name}.png", point_mask)
+    cv2.imwrite(f"point/{img_name}_1.png", minimap_array)
 
     full_map_curr_distance = None
     if IS_BIG_MAP:
@@ -200,7 +232,7 @@ def process_image(
         keyboard.release("m")
 
         full_map_array = cv2.cvtColor(np.array(full_map_screen), cv2.COLOR_RGB2BGR)
-        full_map_point_xy = detect_point_from_drone(full_map_array)
+        full_map_point_xy, _ = detect_point_from_drone(full_map_array)
         full_map_me_xy = detect_me_from_drone(full_map_array)
         full_map_curr_distance = calc_distance(full_map_me_xy, full_map_point_xy, battle_params.get('meters_in_pixel'))
 
@@ -209,11 +241,8 @@ def process_image(
 
     if minimap_curr_distance and minimap_curr_distance != prev_minimap_distance:
         d = full_map_curr_distance if IS_BIG_MAP else minimap_curr_distance
-        # d = minimap_curr_distance
         new_text = f"D: {str(d)}\nM: {battle_params['square_width_meter']}"
         update_tk_text(label, new_text)
-        root.after(200, process_image, root, label, battle_params, minimap_curr_distance, minimap_me_xy, minimap_point_xy)
-        # root.after(200, process_image, root, label, battle_params, minimap_curr_distance)
+        root.after(200, process_image, root, label, battle_params, minimap_curr_distance, minimap_me_xy, minimap_point_xy, curr_contour_pixels)
     else:
-        root.after(200, process_image, root, label, battle_params, prev_minimap_distance, prev_minimap_me_xy, prev_minimap_point_xy)
-        # root.after(200, process_image, root, label, battle_params, prev_minimap_distance)
+        root.after(200, process_image, root, label, battle_params, prev_minimap_distance, prev_minimap_me_xy, prev_minimap_point_xy, prev_point_contour)
