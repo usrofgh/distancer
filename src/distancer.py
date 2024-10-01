@@ -1,5 +1,6 @@
 import time
-from copy import deepcopy
+from datetime import datetime
+
 import pyautogui
 import keyboard
 
@@ -27,8 +28,6 @@ def detect_bottom_right_square_width_black_pixel(screen_array: np.array) -> tupl
 
 def determine_minimap_borders(screen_array: np.array, start_point: tuple) -> tuple:
     bottom_right_map = None
-    bottom_left_map = None
-    top_right_map = None
     top_left_map = None
     curr_point = list(start_point)
     curr_point[0] += 1
@@ -49,7 +48,6 @@ def determine_minimap_borders(screen_array: np.array, start_point: tuple) -> tup
         else:
             curr_point[0] += 1
             y += 1
-            top_right_map = [y, x]
             break
 
     while ...:
@@ -69,7 +67,6 @@ def determine_minimap_borders(screen_array: np.array, start_point: tuple) -> tup
         else:
             curr_point[0] -= 1
             y -= 1
-            bottom_left_map = [y, x]
             break
 
     return top_left_map, bottom_right_map
@@ -107,26 +104,81 @@ def detect_me_from_drone(map_array: np.array) -> tuple:
             cy = int(m["m01"] / m["m00"])
             me_xy = (cx, cy)
             return me_xy
-            # cv2.circle(map_array, (cx, cy), 15, (0, 0, 255), -1)
 
-def detect_point_from_drone(map_array: np.array) -> tuple:
+
+def filter_contours_by_distance(contours, max_distance=20):
+    def distance_between_contours(c1, c2):
+        c1_points = c1.reshape(-1, 2)
+        c2_points = c2.reshape(-1, 2)
+        distances = [np.linalg.norm(p1 - p2) for p1 in c1_points for p2 in c2_points]
+        return np.min(distances)
+    filtered_contours = []
+    for i, c1 in enumerate(contours):
+        for j, c2 in enumerate(contours):
+            if i != j and distance_between_contours(c1, c2) <= max_distance:
+                if i not in filtered_contours:
+                    filtered_contours.append(i)
+                if j not in filtered_contours:
+                    filtered_contours.append(j)
+
+    return [contours[i] for i in filtered_contours]
+def get_img_without_internal_contour(img: np.array) -> np.array:
+    point_contours, _ = cv2.findContours(img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    point_contours = filter_contours_by_distance(point_contours)
+    if not point_contours or (len(point_contours) < 2 and cv2.contourArea(max(point_contours, key=cv2.contourArea)) < 10):
+        return None
+
+    external_image = np.zeros_like(img)
+
+    for i, contour in enumerate(point_contours):
+        x, y, w, h = cv2.boundingRect(contour)
+        is_inner = False
+        for j, other_contour in enumerate(point_contours):
+            if i != j:
+                x2, y2, w2, h2 = cv2.boundingRect(other_contour)
+                if x > x2 and y > y2 and (x + w) < (x2 + w2) and (y + h) < (y2 + h2):
+                    is_inner = True
+                    break
+        if not is_inner:
+            cv2.drawContours(external_image, [contour], -1, 255, thickness=1)
+
+    kernel = np.ones((3, 3), np.uint8)
+    closed_image = cv2.morphologyEx(external_image, cv2.MORPH_CLOSE, kernel)
+    return closed_image
+
+
+def detect_point_from_drone(map_array: np.array) -> tuple | None:
     point_mask = cv2.inRange(map_array, POINT_LOW, POINT_HIGH)
-    point_contours, _ = cv2.findContours(point_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    if not point_contours:
-        return None, None
+    ext_mask = get_img_without_internal_contour(point_mask)
+    if ext_mask is None:
+        return None, None, None
+
+    ext_contours, _ = cv2.findContours(ext_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    biggest_contour = max(ext_contours, key=cv2.contourArea)
+    hull = cv2.convexHull(biggest_contour)
+    (x, y), radius = cv2.minEnclosingCircle(hull)
+    if radius < 8:
+        return None, None, None
+    # else:
+    #     return round(x), round(y)
+
+
+    circle_mask = np.zeros_like(ext_mask)
+    cv2.circle(circle_mask, (int(x), int(y)), int(radius), 255, 1)
+    point_contours, _ = cv2.findContours(circle_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
 
     biggest_contour = max(point_contours, key=cv2.contourArea)
-    if cv2.contourArea(biggest_contour) <= 15:
-        return None, None
-
     m = cv2.moments(biggest_contour)
     if m["m00"] != 0:
         cx = int(m["m10"] / m["m00"])
         cy = int(m["m01"] / m["m00"])
         point_xy = (cx, cy)
         contour_pixels = tuple(point[0] for point in biggest_contour)
-        return point_xy, contour_pixels
-        # cv2.circle(map_array, (cx, cy), 15, (0, 0, 255), -1)
+        return point_xy, contour_pixels, circle_mask
+    else:
+        return None, None, None
 
 def is_shifted(previous_contour_pixels: tuple, current_contour_pixels: tuple) -> bool:
     previous_set = set(map(tuple, [tuple(point) for point in previous_contour_pixels]))
@@ -143,6 +195,9 @@ def is_shifted(previous_contour_pixels: tuple, current_contour_pixels: tuple) ->
         shift_detected = True
 
     return shift_detected
+
+def get_battle_id(screen_array: np.array) -> str:
+    ...
 
 def initialize_battle_params(screen_array: np.array) -> dict:
     start_point = detect_bottom_right_square_width_black_pixel(screen_array)
@@ -181,6 +236,8 @@ def print_battle_params(battle_params: dict) -> None:
     print(f"METERS IN PIXEL: {round(meters_in_pixel, 2)}")
     print(f"MINIMAP BORDERS: {minimap_borders}")
 
+def is_points_close(point1, point2, tolerance=1):
+    return abs(point1[0] - point2[0]) <= tolerance and abs(point1[1] - point2[1]) <= tolerance
 
 def process_image(
     root,
@@ -189,9 +246,14 @@ def process_image(
     prev_minimap_distance = None,
     prev_minimap_me_xy = None,
     prev_minimap_point_xy = None,
-    prev_point_contour = None
+    prev_point_xy = None
 ):
-    screen = pyautogui.screenshot()
+    try:
+        screen = pyautogui.screenshot()
+    except Exception:
+        root.after(100, process_image, root, label, battle_params, prev_minimap_distance, prev_minimap_me_xy, prev_minimap_point_xy, prev_point_xy)
+        return
+
     screen = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
 
     minimap_borders = battle_params["minimap_borders"]
@@ -200,23 +262,20 @@ def process_image(
         minimap_borders[0][1]:minimap_borders[1][1] + 1,
     ]
 
-    minimap_point_xy, curr_contour_pixels = detect_point_from_drone(minimap_array)
+    minimap_point_xy, contours, cyrcle_mask = detect_point_from_drone(minimap_array)
     minimap_me_xy = detect_me_from_drone(minimap_array)
 
     if (
         (minimap_point_xy is None or minimap_me_xy is None) or
-        (prev_minimap_me_xy == minimap_me_xy and prev_minimap_point_xy == minimap_point_xy) or
-        prev_point_contour and  not is_shifted(prev_point_contour, curr_contour_pixels)
+        (prev_minimap_me_xy == minimap_me_xy and is_points_close(prev_minimap_point_xy, minimap_point_xy))
     ):
-        root.after(200, process_image, root, label, battle_params, prev_minimap_distance, prev_minimap_me_xy, prev_minimap_point_xy, prev_point_contour)
+        root.after(100, process_image, root, label, battle_params, prev_minimap_distance, prev_minimap_me_xy, prev_minimap_point_xy, prev_point_xy)
         return
 
     img_name = f"{str(datetime.now().timestamp()).replace('.', '')}"
     point_mask = cv2.inRange(minimap_array, POINT_LOW, POINT_HIGH)
-    point_contours_binary, _ = cv2.findContours(point_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-
     cv2.imwrite(f"point/{img_name}.png", point_mask)
+    cv2.imwrite(f"point/{img_name}_morph.png", cyrcle_mask)
     cv2.imwrite(f"point/{img_name}_1.png", minimap_array)
 
     full_map_curr_distance = None
@@ -232,10 +291,14 @@ def process_image(
         keyboard.release("m")
 
         full_map_array = cv2.cvtColor(np.array(full_map_screen), cv2.COLOR_RGB2BGR)
-        full_map_point_xy, _ = detect_point_from_drone(full_map_array)
+        full_map_point_xy, contours, cyrcle_mask = detect_point_from_drone(full_map_array)
         full_map_me_xy = detect_me_from_drone(full_map_array)
         full_map_curr_distance = calc_distance(full_map_me_xy, full_map_point_xy, battle_params.get('meters_in_pixel'))
-
+        if not full_map_curr_distance:
+            root.after(100, process_image, root, label, battle_params, prev_minimap_distance, prev_minimap_me_xy,
+                prev_minimap_point_xy, prev_point_xy
+            )
+            return
 
     minimap_curr_distance = calc_distance(minimap_me_xy, minimap_point_xy, battle_params.get('meters_in_pixel'))
 
@@ -243,6 +306,6 @@ def process_image(
         d = full_map_curr_distance if IS_BIG_MAP else minimap_curr_distance
         new_text = f"D: {str(d)}\nM: {battle_params['square_width_meter']}"
         update_tk_text(label, new_text)
-        root.after(200, process_image, root, label, battle_params, minimap_curr_distance, minimap_me_xy, minimap_point_xy, curr_contour_pixels)
+        root.after(100, process_image, root, label, battle_params, minimap_curr_distance, minimap_me_xy, minimap_point_xy)
     else:
-        root.after(200, process_image, root, label, battle_params, prev_minimap_distance, prev_minimap_me_xy, prev_minimap_point_xy, prev_point_contour)
+        root.after(100, process_image, root, label, battle_params, prev_minimap_distance, prev_minimap_me_xy, prev_minimap_point_xy, prev_point_xy)

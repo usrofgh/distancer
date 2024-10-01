@@ -16,10 +16,12 @@ METER_HIGH = np.array([18, 18, 18], dtype=np.uint8)
 ME_LOW = np.array([60, 151, 72], dtype=np.uint8)
 ME_HIGH = np.array([86, 215, 103], dtype=np.uint8)
 POINT_LOW = np.array([5, 153, 155], dtype=np.uint8)
-POINT_HIGH = np.array([7, 216, 216], dtype=np.uint8)
+POINT_HIGH = np.array([7 , 255, 255], dtype=np.uint8)
 
 
 MIN_BORDER_COLOR_MINIMAP = np.array([97, 97, 97], dtype=np.uint8)
 MAX_BORDER_COLOR_MINIMAP = np.array([150, 150, 150], dtype=np.uint8)
+
+MATCH_POINT_PIXEL_COUNT = 0.35
 
 IS_BIG_MAP = True
