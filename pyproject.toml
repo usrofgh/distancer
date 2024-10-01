@@ -1,0 +1,28 @@
+[tool.poetry]
+name = "distancer"
+version = "0.1.0"
+description = "THe program automate distance calculation process"
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.14"
+mss = "^9.0.2"
+pillow = "^10.4.0"
+opencv-python = "^4.10.0.84"
+pytesseract = "^0.3.13"
+pyautogui = "^0.9.54"
+pyinput = "^0.3.2"
+keyboard = "^0.13.5"
+pywin32 = "^306"
+six = "^1.16.0"
+markupsafe = "^2.1.5"
+requests = "^2.32.3"
+pygments = "^2.18.0"
+isort = "^5.13.2"
+pyinstaller = "^6.10.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
